@@ -2,7 +2,7 @@
 <html lang="sv">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' blob:; worker-src blob:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self' https://kth-campus-guide.kth-campus-guide.workers.dev; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' blob:; worker-src blob:; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102c26">
   <meta name="description" content="Ditt KTH-schema, dina salar och vägen dit.">
@@ -723,15 +723,20 @@ footer{display:flex;justify-content:space-between;gap:10px;padding:19px 20px;col
     <details id="setup-guide" class="guide" open>
   <summary>Lägg till ditt schema</summary>
   <p>Importera ditt eget schema för att se dina dagar, salar och gångvägar. Kalendern sparas i den här webbläsaren.</p>
-  <ol>
-    <li><strong>TimeEdit:</strong> Öppna <a href="https://www.kth.se/student/studier/schema/att-soka-i-schemat-i-timeedit-1.1490784" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema</strong>. Välj datumperiod och listvy. Under <strong>Ladda ner</strong> väljer du <strong>PDF-dokument (Skriv ut)</strong> eller <strong>iCal (.ics)</strong>. Spara PDF-filen när den öppnas.</li>
-    <li><strong>Canvas:</strong> Öppna <a href="https://canvas.kth.se/calendar" target="_blank" rel="noopener">Kalendern i Canvas</a>. Välj <strong>Kalenderflöde</strong> (<strong>Calendar Feed</strong>) och öppna länken för att ladda ner .ics-filen.</li>
-    <li>Välj din PDF- eller .ics-fil nedan. Vill du använda båda kalendrarna väljer du båda filerna samtidigt.</li>
-  </ol>
-  <p>När schemat ändras laddar du ner nya filer och importerar dem igen. Varje import ersätter det sparade schemat på den här enheten.</p>
-  <p>För PDF krävs markerbar text. Bilder och skannade scheman går inte att läsa.</p>
-  <label for="schedule-file"><strong>Välj schemafiler (PDF eller ICS)</strong></label><br>
+  <h3>TimeEdit-fil</h3>
+  <p>Öppna <a href="https://www.kth.se/student/studier/schema/att-soka-i-schemat-i-timeedit-1.1490784" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema</strong>. Välj datumperiod och listvy. Under <strong>Ladda ner</strong> väljer du <strong>PDF-dokument (Skriv ut)</strong> eller <strong>iCal (.ics)</strong>. Spara PDF-filen när den öppnas.</p>
+  <p>Välj filen nedan. För PDF krävs markerbar text.</p>
+  <label for="schedule-file"><strong>Välj TimeEdit-fil (PDF eller ICS)</strong></label><br>
   <input id="schedule-file" type="file" accept=".pdf,application/pdf,.ics,text/calendar" multiple>
+  <form id="canvas-link-form" autocomplete="off">
+  <h3>Canvas-länk</h3>
+  <p>Öppna <a href="https://canvas.kth.se/calendar" target="_blank" rel="noopener">Kalendern i Canvas</a>, välj <strong>Kalenderflöde</strong> och kopiera länken. Klistra in den här och välj <strong>Hämta Canvas-schema</strong>.</p>
+  <label for="canvas-calendar-url"><strong>Canvas kalenderflöde</strong></label><br>
+  <input id="canvas-calendar-url" type="password" maxlength="2048" required autocomplete="off" spellcheck="false">
+  <button type="submit">Hämta Canvas-schema</button>
+  <p>Länken används för hämtningen. Bara de importerade kalenderposterna sparas i webbläsaren.</p>
+</form>
+
   <p id="import-status" role="status">Inget schema har lagts till ännu.</p>
   <button id="clear-schedule" type="button" hidden>Ta bort sparat schema</button>
 </details>
@@ -1501,6 +1506,17 @@ function showImported(events) {
   render();
 }
 
+function saveImported(events) {
+  showImported(events);
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(imported));
+    importStatus.textContent = imported.length + " kalenderposter sparade på den här enheten.";
+  } catch {
+    importStatus.textContent = imported.length + " kalenderposter öppnade för det här besöket.";
+  }
+  $("setup-guide").open = false;
+}
+
 try {
   const saved = JSON.parse(localStorage.getItem(storageKey) || "[]");
   if (Array.isArray(saved) && saved.length && saved.every(event =>
@@ -1532,15 +1548,10 @@ importField.addEventListener("change", async () => {
       for (const event of entries) if (!event.cancelled) events.set(event.id, event);
     }
     if (!events.size || events.size > 2500) throw new Error();
-    const ordered = [...events.values()].sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
-    showImported(ordered);
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(imported));
-      importStatus.textContent = imported.length + " kalenderposter sparade på den här enheten.";
-    } catch {
-      importStatus.textContent = imported.length + " kalenderposter öppnade för det här besöket.";
-    }
-    $("setup-guide").open = false;
+    const combined = [...imported.filter(event => event.source === "canvas"), ...events.values()];
+    if (combined.length > 2500) throw new Error();
+    const ordered = combined.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+    saveImported(ordered);
   } catch {
     importStatus.textContent = "Filen gick inte att importera. Prova en .ics-fil eller en PDF från TimeEdit i listvy med läsbara datum och tider.";
   } finally {
@@ -1559,6 +1570,49 @@ $("clear-schedule").addEventListener("click", () => {
   showImported([]);
   importStatus.textContent = "Schemat har tagits bort från den här webbläsaren.";
   $("setup-guide").open = true;
+});
+
+const canvasEndpoint = "https://kth-campus-guide.kth-campus-guide.workers.dev/canvas-feed";
+const canvasForm = $("canvas-link-form");
+const canvasLink = $("canvas-calendar-url");
+canvasForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = canvasForm.querySelector("button");
+  if (button.disabled || importField.disabled) return;
+  button.disabled = true;
+  importField.disabled = true;
+  $("clear-schedule").disabled = true;
+  importStatus.textContent = "Hämtar Canvas-kalendern…";
+  try {
+    const response = await fetch(canvasEndpoint, {
+      method: "POST", credentials: "omit", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: canvasLink.value.trim() })
+    });
+    if (response.status === 400) {
+      importStatus.textContent = "Klistra in kalenderflödets länk från KTH Canvas.";
+      return;
+    }
+    if (!response.ok) throw new Error();
+    const range = { from: day.min, through: day.max };
+    const { events } = readCalendar(await response.text(), "canvas", Date.now(), range);
+    const active = events.filter(item => !item.cancelled);
+    if (!active.length) {
+      importStatus.textContent = "Canvas-flödet innehåller inga händelser inom de visade årtalen.";
+      return;
+    }
+    const combined = [...imported.filter(item => item.source !== "canvas"), ...active];
+    if (combined.length > 2500) throw new Error();
+    combined.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+    saveImported(combined);
+    canvasLink.value = "";
+  } catch {
+    importStatus.textContent = "Canvas-kalendern kunde inte läsas. Kopiera kalenderlänken igen och försök på nytt.";
+  } finally {
+    button.disabled = false;
+    importField.disabled = false;
+    $("clear-schedule").disabled = false;
+  }
 });
 
 })();
