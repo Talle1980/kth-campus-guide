@@ -2,7 +2,7 @@
 <html lang="sv">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline' 'self' blob:; worker-src blob:; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102c26">
   <meta name="description" content="Ditt KTH-schema, dina salar och vägen dit.">
@@ -724,13 +724,14 @@ footer{display:flex;justify-content:space-between;gap:10px;padding:19px 20px;col
   <summary>Lägg till ditt schema</summary>
   <p>Importera ditt eget schema för att se dina dagar, salar och gångvägar. Kalendern sparas i den här webbläsaren.</p>
   <ol>
-    <li><strong>TimeEdit:</strong> Öppna <a href="https://www.kth.se/student/studier/schema/att-soka-i-schemat-i-timeedit-1.1490784" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema</strong>. Välj datumperiod och ladda ner kalendern som <strong>iCal (.ics)</strong> under <strong>Ladda ner</strong>.</li>
+    <li><strong>TimeEdit:</strong> Öppna <a href="https://www.kth.se/student/studier/schema/att-soka-i-schemat-i-timeedit-1.1490784" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema</strong>. Välj datumperiod och listvy. Under <strong>Ladda ner</strong> väljer du <strong>PDF-dokument (Skriv ut)</strong> eller <strong>iCal (.ics)</strong>. Spara PDF-filen när den öppnas.</li>
     <li><strong>Canvas:</strong> Öppna <a href="https://canvas.kth.se/calendar" target="_blank" rel="noopener">Kalendern i Canvas</a>. Välj <strong>Kalenderflöde</strong> (<strong>Calendar Feed</strong>) och öppna länken för att ladda ner .ics-filen.</li>
-    <li>Välj din .ics-fil nedan. Vill du använda båda kalendrarna väljer du båda filerna samtidigt.</li>
+    <li>Välj din PDF- eller .ics-fil nedan. Vill du använda båda kalendrarna väljer du båda filerna samtidigt.</li>
   </ol>
   <p>När schemat ändras laddar du ner nya filer och importerar dem igen. Varje import ersätter det sparade schemat på den här enheten.</p>
-  <label for="schedule-file"><strong>Välj kalenderfiler (.ics)</strong></label><br>
-  <input id="schedule-file" type="file" accept=".ics,text/calendar" multiple>
+  <p>För PDF krävs markerbar text. Bilder och skannade scheman går inte att läsa.</p>
+  <label for="schedule-file"><strong>Välj schemafiler (PDF eller ICS)</strong></label><br>
+  <input id="schedule-file" type="file" accept=".pdf,application/pdf,.ics,text/calendar" multiple>
   <p id="import-status" role="status">Inget schema har lagts till ännu.</p>
   <button id="clear-schedule" type="button" hidden>Ta bort sparat schema</button>
 </details>
@@ -1353,6 +1354,132 @@ $("clear-route").addEventListener("click", () => {
   fitCampus();
 });
 
+const pdfMonths = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+const englishPdfMonths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const pdfDay = /^(?:(?:v\.?\s*\d{1,2}|\d{1,2})(?:\s+))?(?:(?:mån|tis|ons|tors?|fre|lör|sön|mon|tue|wed|thu|fri|sat|sun)[\p{L}.]*\s+)?/iu;
+const pdfTime = /^([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:[-–—]\s*|\s+)([01]?\d|2[0-3]|24)[:.]([0-5]\d)\b/;
+
+function pdfDate(value, year, previousMonth) {
+  const iso = value.match(/^(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
+  const swedish = value.match(/^(\d{1,2})\s+([\p{L}]{3,})\.?(?:\s+(20\d{2}))?\b/iu);
+  const numeric = value.match(/^(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?(?![\d:])/)
+    || value.match(/^(\d{1,2})\.(\d{1,2})\.(20\d{2})\b/);
+  const match = iso || swedish || numeric;
+  if (!match) return null;
+  const day = Number(iso ? iso[3] : match[1]);
+  const monthName = swedish?.[2].slice(0, 3).toLowerCase();
+  const month = swedish ? Math.max(pdfMonths.indexOf(monthName), englishPdfMonths.indexOf(monthName)) + 1 : Number(match[2]);
+  const explicitYear = iso ? iso[1] : match[3];
+  const selectedYear = explicitYear ? Number(explicitYear) : year + (previousMonth - month > 6 ? 1 : 0);
+  const checked = new Date(Date.UTC(selectedYear, month - 1, day));
+  if (checked.getUTCMonth() + 1 !== month || checked.getUTCDate() !== day) return null;
+  return { date: checked.toISOString().slice(0, 10), month, year: selectedYear, rest: value.slice(match[0].length).trim() };
+}
+
+function pdfRows(items) {
+  const lines = [];
+  const text = items.filter(item => item.str?.trim()).sort((a, b) =>
+    b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
+  for (const item of text) {
+    const row = lines.at(-1);
+    if (row && Math.abs(row.y - item.transform[5]) < 2.5) row.items.push(item);
+    else lines.push({ y: item.transform[5], items: [item] });
+  }
+  return lines.map(row => row.items.sort((a, b) => a.transform[4] - b.transform[4]));
+}
+
+function parseSchedulePdfPages(pages, range, knownRooms, defaultYear = new Date().getFullYear()) {
+  const events = new Map();
+  const clean = value => value.replace(/\s+/g, " ").trim();
+  let currentDate;
+  let year = defaultYear;
+  let month = 0;
+  for (const page of pages) {
+    let roomColumn = null;
+    for (const row of pdfRows(page)) {
+      const line = clean(row.map(item => item.str).join(" "));
+      if (/\b(?:datum|date|starttid|start time|sluttid)\b/i.test(line)) {
+        const index = row.findIndex(item => /^(?:sal|lokal(?:er)?|room|location)$/i.test(clean(item.str)));
+        roomColumn = index >= 0 ? [row[index].transform[4] - 3, (row[index + 1]?.transform[4] ?? Infinity) - 3] : null;
+      }
+      // First try the exact line, so a numeric day or a start hour is not
+      // mistaken for TimeEdit's optional week-number column.
+      const parsed = pdfDate(line, year, month) || pdfDate(line.replace(pdfDay, ""), year, month);
+      let body = line;
+      if (parsed) {
+        currentDate = parsed.date;
+        year = parsed.year;
+        month = parsed.month;
+        body = parsed.rest;
+      }
+      const times = body.match(pdfTime);
+      if (!currentDate || currentDate < range.from || currentDate > range.through || !times) continue;
+      const start = times[1].padStart(2, "0") + ":" + times[2];
+      const end = times[3].padStart(2, "0") + ":" + times[4];
+      if (end <= start || (times[3] === "24" && times[4] !== "00")) continue;
+      const details = body.slice(times[0].length).replace(/^[\s,;|]+/, "");
+      if (!details) continue;
+      const columnRoom = roomColumn ? clean(row.filter(item =>
+        item.transform[4] >= roomColumn[0] && item.transform[4] < roomColumn[1]).map(item => item.str).join(" ")) : "";
+      const words = details.toUpperCase().split(/[^\p{L}\p{N}]+/u);
+      const room = columnRoom || knownRooms.filter(name => words.includes(name.toUpperCase())).join(", ") ||
+        details.match(/(?:sal|lokal|room)\s*:\s*([^,;|]+)/i)?.[1] || "";
+      const type = details.match(/föreläsning|seminarium|övning|laboration|tentamen|handledning|workshop|lecture|seminar|exercise|exam|lab(?:oration)?/i)?.[0] || "Schemapass";
+      const course = details.match(/\b[A-Z]{2}\d{4}\b/)?.[0] || "Importerat schema";
+      const title = details.slice(0, 220);
+      const id = ["pdf", currentDate, start, end, title, room].join("|");
+      events.set(id, { id, date: currentDate, start, end, title, type, course, room: room.slice(0, 140),
+        group: "", source: "import", cancelled: false });
+    }
+  }
+  return [...events.values()];
+}
+
+let pdfEngine;
+async function loadPdfEngine() {
+  if (pdfEngine) return pdfEngine;
+  await Promise.all(["pdf-library.js", "pdf-worker.js"].map(file => new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "./" + file;
+    script.onload = resolve;
+    script.onerror = reject;
+    document.head.append(script);
+  })));
+  async function moduleUrl(data) {
+    const bytes = Uint8Array.from(atob(data), char => char.charCodeAt(0));
+    const text = await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))).blob();
+    return URL.createObjectURL(new Blob([text], { type: "text/javascript" }));
+  }
+  const libraryUrl = await moduleUrl(globalThis.kthPdfLibrary);
+  try {
+    const engine = await import(libraryUrl);
+    engine.GlobalWorkerOptions.workerSrc = await moduleUrl(globalThis.kthPdfWorker);
+    pdfEngine = engine;
+    return pdfEngine;
+  } finally {
+    URL.revokeObjectURL(libraryUrl);
+  }
+}
+
+async function readSchedulePdf(file, range, knownRooms) {
+  const pdf = await loadPdfEngine();
+  const task = pdf.getDocument({
+    data: new Uint8Array(await file.arrayBuffer()), useWasm: false, disableFontFace: true, isEvalSupported: false
+  });
+  try {
+    const document = await task.promise;
+    if (document.numPages > 60) throw new Error("PDF-filen har för många sidor.");
+    const pages = [];
+    for (let i = 1; i <= document.numPages; i++) {
+      const page = await document.getPage(i);
+      pages.push((await page.getTextContent()).items);
+    }
+    return parseSchedulePdfPages(pages, range, knownRooms);
+  } finally {
+    await task.destroy();
+  }
+}
+
 const importStatus = $("import-status");
 const importField = $("schedule-file");
 const storageKey = "kth-campus-guide.schedule.v1";
@@ -1392,13 +1519,16 @@ importField.addEventListener("change", async () => {
   if (!files.length) return;
   importField.disabled = true;
   $("clear-schedule").disabled = true;
+  importStatus.textContent = "Läser schemafilerna…";
   try {
-    if (files.length > 8 || files.some(file => file.size > 2500000)) throw new Error();
+    if (files.length > 8 || files.some(file => file.size > 10000000)) throw new Error();
     const events = new Map();
+    const range = { from: day.min, through: day.max };
     for (const file of files) {
-      const { events: entries } = readCalendar(await file.text(), "import", Date.now(), {
-        from: day.min, through: day.max
-      });
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+      const entries = isPdf ? await readSchedulePdf(file, range, Object.keys(rooms)) :
+        readCalendar(await file.text(), "import", Date.now(), range).events;
+      if (isPdf && !entries.length) throw new Error("Ingen läsbar schemarad hittades i PDF-filen.");
       for (const event of entries) if (!event.cancelled) events.set(event.id, event);
     }
     if (!events.size || events.size > 2500) throw new Error();
@@ -1412,7 +1542,7 @@ importField.addEventListener("change", async () => {
     }
     $("setup-guide").open = false;
   } catch {
-    importStatus.textContent = "Filen gick inte att importera. Välj en .ics-fil med händelser inom årtalen som visas.";
+    importStatus.textContent = "Filen gick inte att importera. Prova en .ics-fil eller en PDF från TimeEdit i listvy med läsbara datum och tider.";
   } finally {
     importField.disabled = false;
     $("clear-schedule").disabled = false;
