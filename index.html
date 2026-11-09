@@ -725,8 +725,9 @@ footer{display:flex;justify-content:space-between;gap:10px;padding:19px 20px;col
   <p>Importera ditt eget schema för att se dina dagar, salar och gångvägar. Kalendern sparas i den här webbläsaren.</p>
   <form id="timeedit-link-form" data-calendar-source="timeedit" autocomplete="off">
   <h3>TimeEdit-länk</h3>
-  <p>Öppna <a href="https://www.kth.se/schema" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema → Prenumerera</strong>. Välj en period, kopiera iCal-länken och klistra in den här.</p>
-  <label for="timeedit-calendar-url"><strong>TimeEdits prenumerationslänk</strong></label><br>
+  <p>Öppna <a href="https://www.kth.se/schema" target="_blank" rel="noopener">KTH:s schemasökning</a>, välj <strong>Sök schema</strong> utan inloggning och sök fram dina kurser och datum. Kopiera adressen från webbläsaren när schemat visas och klistra in den här. En iCal-länk fungerar också om du redan har en.</p>
+  <p>För saluppgifter som bara visas när du är inloggad kan du importera en PDF från listvyn i Mitt Schema.</p>
+  <label for="timeedit-calendar-url"><strong>TimeEdits schemalänk</strong></label><br>
   <input id="timeedit-calendar-url" type="password" maxlength="2048" required autocomplete="off" spellcheck="false">
   <button type="submit">Hämta TimeEdit-schema</button>
 </form>
@@ -1614,7 +1615,7 @@ $("setup-guide").addEventListener("submit", async event => {
     });
     if (response.status === 400) {
       importStatus.textContent = source === "timeedit"
-        ? "Kopiera iCal-länken från Prenumerera i TimeEdit. Länken till själva schemavyn fungerar inte här."
+        ? "Kopiera adressen till schemat från KTH:s publika schemasökning. Om du använder Mitt Schema bakom inloggning kan du välja en PDF från listvyn."
         : "Klistra in kalenderflödets länk från KTH Canvas.";
       return;
     }
@@ -1632,7 +1633,7 @@ $("setup-guide").addEventListener("submit", async event => {
     saveImported(combined);
     input.value = "";
   } catch {
-    importStatus.textContent = "Schemat från " + name + " kunde inte läsas. Kopiera prenumerationslänken igen och försök på nytt.";
+    importStatus.textContent = "Schemat från " + name + " kunde inte läsas. Kontrollera kalenderlänken och försök igen.";
   } finally {
     button.disabled = false;
     importField.disabled = false;
