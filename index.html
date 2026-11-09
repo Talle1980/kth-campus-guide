@@ -723,12 +723,19 @@ footer{display:flex;justify-content:space-between;gap:10px;padding:19px 20px;col
     <details id="setup-guide" class="guide" open>
   <summary>Lägg till ditt schema</summary>
   <p>Importera ditt eget schema för att se dina dagar, salar och gångvägar. Kalendern sparas i den här webbläsaren.</p>
-  <h3>TimeEdit-fil</h3>
-  <p>Öppna <a href="https://www.kth.se/student/studier/schema/att-soka-i-schemat-i-timeedit-1.1490784" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema</strong>. Välj datumperiod och listvy. Under <strong>Ladda ner</strong> väljer du <strong>PDF-dokument (Skriv ut)</strong> eller <strong>iCal (.ics)</strong>. Spara PDF-filen när den öppnas.</p>
-  <p>Välj filen nedan. För PDF krävs markerbar text.</p>
+  <form id="timeedit-link-form" data-calendar-source="timeedit" autocomplete="off">
+  <h3>TimeEdit-länk</h3>
+  <p>Öppna <a href="https://www.kth.se/schema" target="_blank" rel="noopener">KTH TimeEdit</a>, logga in som student och välj <strong>Mitt Schema → Prenumerera</strong>. Välj en period, kopiera iCal-länken och klistra in den här.</p>
+  <label for="timeedit-calendar-url"><strong>TimeEdits prenumerationslänk</strong></label><br>
+  <input id="timeedit-calendar-url" type="password" maxlength="2048" required autocomplete="off" spellcheck="false">
+  <button type="submit">Hämta TimeEdit-schema</button>
+</form>
+
+  <h3>Importera en fil</h3>
+  <p>Har du redan en fil? Välj den här. För PDF krävs listvy och markerbar text. För rutnätsvyn använder du kalenderlänken eller en ICS-fil.</p>
   <label for="schedule-file"><strong>Välj TimeEdit-fil (PDF eller ICS)</strong></label><br>
   <input id="schedule-file" type="file" accept=".pdf,application/pdf,.ics,text/calendar" multiple>
-  <form id="canvas-link-form" autocomplete="off">
+  <form id="canvas-link-form" data-calendar-source="canvas" autocomplete="off">
   <h3>Canvas-länk</h3>
   <p>Öppna <a href="https://canvas.kth.se/calendar" target="_blank" rel="noopener">Kalendern i Canvas</a>, välj <strong>Kalenderflöde</strong> och kopiera länken. Klistra in den här och välj <strong>Hämta Canvas-schema</strong>.</p>
   <label for="canvas-calendar-url"><strong>Canvas kalenderflöde</strong></label><br>
@@ -940,7 +947,7 @@ const stockholm = new Intl.DateTimeFormat("sv-SE", {
   hour: "2-digit", minute: "2-digit", hourCycle: "h23"
 });
 const dayMs = 86400000;
-const activity = /föreläsning|seminarium|övning|laboration|tentamen|handledning|workshop|lecture|exercise|exam|lab(?:oration)?/i;
+const activity = /föreläsning|seminarium|övning|laboration|tentamen|handledning|workshop|lecture|seminar|exercise|exam|lab(?:oration)?/i;
 
 function wallTime(time) {
   if (time.isDate || time.zone === ICAL.Timezone.localTimezone || time.timezone === "Europe/Stockholm") {
@@ -1361,8 +1368,10 @@ $("clear-route").addEventListener("click", () => {
 
 const pdfMonths = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
 const englishPdfMonths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-const pdfDay = /^(?:(?:v\.?\s*\d{1,2}|\d{1,2})(?:\s+))?(?:(?:mån|tis|ons|tors?|fre|lör|sön|mon|tue|wed|thu|fri|sat|sun)[\p{L}.]*\s+)?/iu;
+const pdfDay = /^(?:(?:[vw]\.?\s*\d{1,2}|\d{1,2})(?:\s+))?(?:(?:mån|tis|ons|tors?|fre|lör|sön|mon|tue|wed|thu|fri|sat|sun)[\p{L}.]*\s+)?/iu;
 const pdfTime = /^([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:[-–—]\s*|\s+)([01]?\d|2[0-3]|24)[:.]([0-5]\d)\b/;
+
+class SchedulePdfError extends Error {}
 
 function pdfDate(value, year, previousMonth) {
   const iso = value.match(/^(20\d{2})-(\d{1,2})-(\d{1,2})\b/);
@@ -1383,14 +1392,24 @@ function pdfDate(value, year, previousMonth) {
 
 function pdfRows(items) {
   const lines = [];
-  const text = items.filter(item => item.str?.trim()).sort((a, b) =>
-    b.transform[5] - a.transform[5] || a.transform[4] - b.transform[4]);
-  for (const item of text) {
-    const row = lines.at(-1);
-    if (row && Math.abs(row.y - item.transform[5]) < 2.5) row.items.push(item);
-    else lines.push({ y: item.transform[5], items: [item] });
+  const text = items.filter(item => item.str?.trim());
+  const rotated = text.filter(item => Math.abs(item.transform[1]) > Math.abs(item.transform[0]));
+  const direction = rotated.length > text.length / 2 ? Math.sign(rotated[0].transform[1]) : 0;
+  const points = text.map(({ str, transform: [, , , , x, y] }) => ({
+    str, x: direction ? direction * y : x, y: direction ? -direction * x : y
+  })).sort((a, b) => b.y - a.y || a.x - b.x);
+  // TimeEdit's graphical print has a column of hour labels separate from the bookings.
+  const hours = points.filter(item => /^(?:[0-9]|1[0-9]|2[0-4])$/.test(item.str.trim()));
+  if (points.some(item => /^TimeEdit 20\d{2}-/i.test(item.str)) &&
+      hours.some(item => hours.filter(other => Math.abs(item.x - other.x) < 6).length >= 6)) {
+    throw new SchedulePdfError("TimeEdit-PDF:en är i rutnätsvy. Använd TimeEdit-länken eller exportera en PDF från listvyn.");
   }
-  return lines.map(row => row.items.sort((a, b) => a.transform[4] - b.transform[4]));
+  for (const item of points) {
+    const row = lines.at(-1);
+    if (row && Math.abs(row.y - item.y) < 2.5) row.items.push(item);
+    else lines.push({ y: item.y, items: [item] });
+  }
+  return lines.map(row => row.items.sort((a, b) => a.x - b.x));
 }
 
 function parseSchedulePdfPages(pages, range, knownRooms, defaultYear = new Date().getFullYear()) {
@@ -1403,9 +1422,9 @@ function parseSchedulePdfPages(pages, range, knownRooms, defaultYear = new Date(
     let roomColumn = null;
     for (const row of pdfRows(page)) {
       const line = clean(row.map(item => item.str).join(" "));
-      if (/\b(?:datum|date|starttid|start time|sluttid)\b/i.test(line)) {
+      if (row.some(item => /^(?:datum|date|tid|time|starttid|start time|sluttid)$/i.test(clean(item.str)))) {
         const index = row.findIndex(item => /^(?:sal|lokal(?:er)?|room|location)$/i.test(clean(item.str)));
-        roomColumn = index >= 0 ? [row[index].transform[4] - 3, (row[index + 1]?.transform[4] ?? Infinity) - 3] : null;
+        roomColumn = index >= 0 ? [row[index].x - 3, (row[index + 1]?.x ?? Infinity) - 3] : null;
       }
       // First try the exact line, so a numeric day or a start hour is not
       // mistaken for TimeEdit's optional week-number column.
@@ -1425,7 +1444,7 @@ function parseSchedulePdfPages(pages, range, knownRooms, defaultYear = new Date(
       const details = body.slice(times[0].length).replace(/^[\s,;|]+/, "");
       if (!details) continue;
       const columnRoom = roomColumn ? clean(row.filter(item =>
-        item.transform[4] >= roomColumn[0] && item.transform[4] < roomColumn[1]).map(item => item.str).join(" ")) : "";
+        item.x >= roomColumn[0] && item.x < roomColumn[1]).map(item => item.str).join(" ")) : "";
       const words = details.toUpperCase().split(/[^\p{L}\p{N}]+/u);
       const room = columnRoom || knownRooms.filter(name => words.includes(name.toUpperCase())).join(", ") ||
         details.match(/(?:sal|lokal|room)\s*:\s*([^,;|]+)/i)?.[1] || "";
@@ -1473,7 +1492,7 @@ async function readSchedulePdf(file, range, knownRooms) {
   });
   try {
     const document = await task.promise;
-    if (document.numPages > 60) throw new Error("PDF-filen har för många sidor.");
+    if (document.numPages > 60) throw new SchedulePdfError("PDF-filen har för många sidor. Använd TimeEdit-länken eller välj en kortare period.");
     const pages = [];
     for (let i = 1; i <= document.numPages; i++) {
       const page = await document.getPage(i);
@@ -1544,16 +1563,17 @@ importField.addEventListener("change", async () => {
       const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
       const entries = isPdf ? await readSchedulePdf(file, range, Object.keys(rooms)) :
         readCalendar(await file.text(), "import", Date.now(), range).events;
-      if (isPdf && !entries.length) throw new Error("Ingen läsbar schemarad hittades i PDF-filen.");
+      if (isPdf && !entries.length) throw new SchedulePdfError("Ingen schemarad kunde läsas i PDF-filen. Använd TimeEdit-länken eller kontrollera datum och listvy i PDF-filen.");
       for (const event of entries) if (!event.cancelled) events.set(event.id, event);
     }
     if (!events.size || events.size > 2500) throw new Error();
-    const combined = [...imported.filter(event => event.source === "canvas"), ...events.values()];
+    const combined = [...imported.filter(event => event.source === "canvas" || event.source === "timeedit"), ...events.values()];
     if (combined.length > 2500) throw new Error();
     const ordered = combined.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
     saveImported(ordered);
-  } catch {
-    importStatus.textContent = "Filen gick inte att importera. Prova en .ics-fil eller en PDF från TimeEdit i listvy med läsbara datum och tider.";
+  } catch (error) {
+    importStatus.textContent = error instanceof SchedulePdfError ? error.message :
+      "Filen gick inte att importera. Prova en TimeEdit-länk, en .ics-fil eller en PDF från TimeEdit i listvy.";
   } finally {
     importField.disabled = false;
     $("clear-schedule").disabled = false;
@@ -1573,41 +1593,46 @@ $("clear-schedule").addEventListener("click", () => {
 });
 
 const canvasEndpoint = "https://kth-campus-guide.kth-campus-guide.workers.dev/canvas-feed";
-const canvasForm = $("canvas-link-form");
-const canvasLink = $("canvas-calendar-url");
-canvasForm.addEventListener("submit", async event => {
+$("setup-guide").addEventListener("submit", async event => {
+  const form = event.target;
+  const source = form.dataset.calendarSource;
+  if (!source) return;
   event.preventDefault();
-  const button = canvasForm.querySelector("button");
+  const input = form.querySelector("input");
+  const button = form.querySelector("button");
+  const name = source === "timeedit" ? "TimeEdit" : "Canvas";
   if (button.disabled || importField.disabled) return;
   button.disabled = true;
   importField.disabled = true;
   $("clear-schedule").disabled = true;
-  importStatus.textContent = "Hämtar Canvas-kalendern…";
+  importStatus.textContent = "Hämtar schemat från " + name + "…";
   try {
     const response = await fetch(canvasEndpoint, {
       method: "POST", credentials: "omit", cache: "no-store",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: canvasLink.value.trim() })
+      body: JSON.stringify({ source, url: input.value.trim() })
     });
     if (response.status === 400) {
-      importStatus.textContent = "Klistra in kalenderflödets länk från KTH Canvas.";
+      importStatus.textContent = source === "timeedit"
+        ? "Kopiera iCal-länken från Prenumerera i TimeEdit. Länken till själva schemavyn fungerar inte här."
+        : "Klistra in kalenderflödets länk från KTH Canvas.";
       return;
     }
     if (!response.ok) throw new Error();
     const range = { from: day.min, through: day.max };
-    const { events } = readCalendar(await response.text(), "canvas", Date.now(), range);
+    const { events } = readCalendar(await response.text(), source, Date.now(), range);
     const active = events.filter(item => !item.cancelled);
     if (!active.length) {
-      importStatus.textContent = "Canvas-flödet innehåller inga händelser inom de visade årtalen.";
+      importStatus.textContent = name + " innehåller inga schemapass inom de visade årtalen.";
       return;
     }
-    const combined = [...imported.filter(item => item.source !== "canvas"), ...active];
+    const combined = [...imported.filter(item => item.source !== source), ...active];
     if (combined.length > 2500) throw new Error();
     combined.sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
     saveImported(combined);
-    canvasLink.value = "";
+    input.value = "";
   } catch {
-    importStatus.textContent = "Canvas-kalendern kunde inte läsas. Kopiera kalenderlänken igen och försök på nytt.";
+    importStatus.textContent = "Schemat från " + name + " kunde inte läsas. Kopiera prenumerationslänken igen och försök på nytt.";
   } finally {
     button.disabled = false;
     importField.disabled = false;
